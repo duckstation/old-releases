@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2019-2024 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2025 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: CC-BY-NC-ND-4.0
 
 #include "gpu_shadergen.h"
@@ -93,6 +93,62 @@ std::string GPUShaderGen::GenerateDisplaySharpBilinearFragmentShader() const
 })";
 
   return ss.str();
+}
+
+std::string GPUShaderGen::GenerateDisplayLanczosFragmentShader() const
+{
+  std::stringstream ss;
+  WriteHeader(ss);
+  WriteDisplayUniformBuffer(ss);
+  DeclareTexture(ss, "samp0", 0, false);
+
+  ss << R"(
+CONSTANT int KERNEL_SIZE = 3;
+CONSTANT float PI = 3.14159265359;
+
+float lanczos(float x)
+ {
+    x = abs(x);
+    if (x < 0.0001)
+      return 1.0;
+
+    if (x > float(KERNEL_SIZE))
+      return 0.0;
+
+    float px = PI * x;
+    return (float(KERNEL_SIZE) * sin(px) * sin(px / float(KERNEL_SIZE))) / (px * px);
+}
+
+)";
+
+  DeclareFragmentEntryPoint(ss, 0, 1);
+  ss << R"(
+{
+  float2 pixel = v_tex0 * u_params.xy;
+  float2 src_pixel = pixel * u_params.zw;
+  float2 src = floor(src_pixel - 0.5) + 0.5;
+    
+  float3 color = float3(0.0, 0.0, 0.0);
+  float totalWeight = 0.0;
+    
+  for (int i = -KERNEL_SIZE; i <= KERNEL_SIZE; i++)
+  {
+      for (int j = -KERNEL_SIZE; j <= KERNEL_SIZE; j++)
+      {
+          float2 samplePos = (src + float2(int2(i, j))) * u_src_size.zw;
+          float dx = src_pixel.x - (src.x + i);
+          float dy = src_pixel.y - (src.y + j);
+          float weight = lanczos(dx) * lanczos(dy);
+            
+          color += SAMPLE_TEXTURE_LEVEL(samp0, ClampUV(samplePos), 0.0).rgb * weight;
+          totalWeight += weight;
+      }
+  }
+    
+  o_col0 = float4(color / totalWeight, 1.0);
+})";
+
+  return std::move(ss).str();
 }
 
 std::string GPUShaderGen::GenerateDeinterlaceWeaveFragmentShader() const
